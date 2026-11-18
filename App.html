@@ -1,0 +1,373 @@
+<script>
+const state = {
+  data: null,
+  page: 'dashboard',
+  taskFilter: 'pending',
+  top3Target: 'current',
+  hombriaCampus: 'Puebla',
+  inventoryLocation: '11 Sur',
+  modal: null,
+  editing: null,
+  busy: false
+};
+
+const NAV = [
+  { group: 'General', items: [
+    ['dashboard','Inicio','⌂'], ['checklist','Checklist general','☷']
+  ]},
+  { group: 'Campus', items: [
+    ['11sur','11 Sur','⌂'], ['inventory','Insumos','▤'], ['team','Equipos y voluntarios','♙']
+  ]},
+  { group: 'Programas', items: [
+    ['hombria','Hombría al Máximo','◉']
+  ]},
+  { group: 'Otros', items: [
+    ['events','Eventos / Otras áreas','◇'], ['settings','Configuración','⚙']
+  ]}
+];
+
+const $ = (selector, root=document) => root.querySelector(selector);
+const $$ = (selector, root=document) => [...root.querySelectorAll(selector)];
+const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtDate = value => {
+  if (!value) return '';
+  const raw=String(value);
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(Number(raw.slice(0,4)),Number(raw.slice(5,7))-1,Number(raw.slice(8,10)),12) : new Date(value);
+  return isNaN(d) ? raw : new Intl.DateTimeFormat('es-MX',{day:'2-digit',month:'short'}).format(d).replace('.', '');
+};
+const todayIso = () => {
+  const now = new Date();
+  const y = now.getFullYear(), m = String(now.getMonth()+1).padStart(2,'0'), d = String(now.getDate()).padStart(2,'0');
+  return `${y}-${m}-${d}`;
+};
+
+function server(fn, ...args) {
+  return new Promise((resolve,reject) => {
+    if (typeof google === 'undefined' || !google.script || !google.script.run) return reject(new Error('Esta pantalla debe abrirse desde la aplicación implementada en Google Apps Script.'));
+    const runner = google.script.run.withSuccessHandler(resolve).withFailureHandler(err => reject(new Error(err && err.message ? err.message : String(err))));
+    runner[fn](...args);
+  });
+}
+
+async function loadData(silent=false) {
+  if (!silent) renderLoading();
+  try {
+    state.data = await server('getAppData');
+    render();
+  } catch (err) {
+    document.getElementById('app').innerHTML = `<div class="page"><div class="card"><div class="eyebrow">Naciones | Oficina</div><h1 class="page-title">No se pudo conectar</h1><p class="page-subtitle">${esc(err.message)}. Revisa que el proyecto esté vinculado a la hoja de cálculo y vuelve a cargar.</p><button class="btn btn-primary" onclick="loadData()">Reintentar</button></div></div>`;
+  }
+}
+
+function renderLoading(){
+  document.getElementById('app').innerHTML = '<div class="boot"><div class="boot-mark">N</div><p>Preparando tu oficina…</p></div>';
+}
+
+function toast(message, error=false) {
+  const old = $('.toast'); if (old) old.remove();
+  const el = document.createElement('div'); el.className = 'toast' + (error ? ' error' : ''); el.textContent = message;
+  document.body.appendChild(el); setTimeout(() => el.remove(), 3600);
+}
+
+function runAction(fn, args, successMessage) {
+  if (state.busy) return;
+  state.busy = true;
+  server(fn, args).then(() => loadData(true)).then(() => toast(successMessage || 'Cambios guardados.')).catch(e => toast(e.message, true)).finally(() => state.busy = false);
+}
+
+function pageMeta(page) {
+  const meta = {
+    dashboard:['Tu espacio de trabajo','Una vista clara de lo importante esta semana.'],
+    checklist:['Checklist general','Todas tus tareas, desde un solo lugar.'],
+    '11sur':['Campus 11 Sur','Pendientes, comunicación, retroalimentación y operación del campus.'],
+    inventory:['Insumos','Control de lo que hay, lo que falta y lo que necesita seguimiento.'],
+    team:['Equipos y voluntarios','Personas, responsabilidades y líneas de coordinación.'],
+    hombria:['Hombría al Máximo','Checklist semanal, calendario de oradores y métricas.'],
+    events:['Eventos / Otras áreas','Pendientes que no pertenecen a un campus o programa específico.'],
+    settings:['Configuración','Preferencias personales, recordatorios y métricas de inscritos.']
+  };
+  return meta[page] || meta.dashboard;
+}
+
+function render() {
+  const d = state.data;
+  if (!d) return renderLoading();
+  const [title,subtitle] = pageMeta(state.page);
+  const nav = NAV.map(group => `<div class="nav-label">${group.group}</div><div class="nav">${group.items.map(item => `<button class="nav-btn ${state.page===item[0]?'active':''}" data-action="navigate" data-page="${item[0]}"><span class="nav-icon">${item[2]}</span>${item[1]}</button>`).join('')}</div>`).join('');
+  const today = new Intl.DateTimeFormat('es-MX',{weekday:'long',day:'numeric',month:'long'}).format(new Date());
+  document.getElementById('app').innerHTML = `
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand"><div class="brand-mark">N</div><div><div class="brand-name">Naciones</div><div class="brand-sub">Oficina</div></div></div>
+        ${nav}
+        <div class="sidebar-foot"><strong>Tu semana, en orden.</strong><br>Gestión interna · Iglesia Naciones<br><span>v0.1 · Base inicial</span></div>
+      </aside>
+      <main class="main">
+        <header class="topbar"><div class="crumb">Naciones <span style="color:#c2c8c2"> / </span> <strong>${esc(title)}</strong></div><div class="topbar-right"><div class="today">${esc(today)}</div><div class="avatar">${initials(d.settings.email || 'N')}</div></div></header>
+        <div class="page">
+          <div class="page-heading"><div><div class="eyebrow">Panel de oficina</div><h1 class="page-title">${esc(title)}</h1><p class="page-subtitle">${esc(subtitle)}</p></div><div class="heading-actions">${state.page==='checklist'||state.page==='11sur'||state.page==='events'?'<button class="btn btn-primary" data-action="new-task">＋ Nueva tarea</button>':''}${state.page==='inventory'?'<button class="btn btn-primary" data-action="new-inventory">＋ Agregar insumo</button>':''}${state.page==='hombria'?'<button class="btn btn-primary" data-action="new-task" data-area="Hombría al Máximo">＋ Nueva tarea</button>':''}${state.page==='team'?'<button class="btn btn-primary" data-action="new-team">＋ Agregar persona</button>':''}</div></div>
+          ${renderPage()}
+        </div>
+      </main>
+      <nav class="mobile-nav">${[['dashboard','Inicio','⌂'],['11sur','11 Sur','⌂'],['hombria','Hombría','◉'],['checklist','Checklist','☷']].map(x=>`<button class="${state.page===x[0]?'active':''}" data-action="navigate" data-page="${x[0]}"><span class="nav-icon">${x[2]}</span>${x[1]}</button>`).join('')}<button data-action="mobile-more"><span class="nav-icon">⋯</span>Más</button></nav>
+    </div>
+    ${renderModal()}
+  `;
+  if (state.page==='hombria') requestAnimationFrame(drawAttendanceChart);
+}
+
+function initials(value){
+  const raw=String(value||'N').split('@')[0].split(/[ ._-]/).filter(Boolean);
+  return (raw.length>1?raw[0][0]+raw[1][0]:raw[0].slice(0,2)).toUpperCase();
+}
+
+function renderPage(){
+  switch(state.page){
+    case 'dashboard': return renderDashboard();
+    case 'checklist': return renderChecklist();
+    case '11sur': return render11Sur();
+    case 'inventory': return renderInventory();
+    case 'team': return renderTeam();
+    case 'hombria': return renderHombria();
+    case 'events': return renderEvents();
+    case 'settings': return renderSettings();
+    default: return renderDashboard();
+  }
+}
+
+function taskStats(tasks){
+  const open=tasks.filter(t=>!t.completed), done=tasks.filter(t=>t.completed);
+  return {open:open.length,done:done.length,total:tasks.length};
+}
+function statCard(label,value,foot,icon){
+  return `<div class="card stat"><div style="display:flex;justify-content:space-between;align-items:center"><div class="stat-label">${label}</div><div class="stat-mark">${icon}</div></div><div class="stat-value">${value}</div><div class="stat-foot">${foot}</div></div>`;
+}
+function renderDashboard(){
+  const d=state.data, tasks=d.tasks||[], s=taskStats(tasks), currentTop=(state.top3Target==='next'?d.nextTop3:d.top3)||[], selectedWeek=state.top3Target==='next'?d.nextWeek:d.week;
+  const campusTasks = tasks.filter(t=>t.area==='11 Sur');
+  const hom=tasks.filter(t=>t.area==='Hombría al Máximo'&&(t.weekKey===d.week.key||t.source!=='HOMBRIA_SEMANAL'));
+  const pendingInventory=(d.inventory||[]).filter(x=>String(x.status).toLowerCase()!=='disponible').length;
+  return `
+    <div class="grid grid-4" style="margin-bottom:17px">
+      ${statCard('Tareas por atender',s.open,'En todas las áreas','◷')}
+      ${statCard('Completadas',s.done,'Tareas marcadas como listas','✓')}
+      ${statCard('Pendientes 11 Sur',taskStats(campusTasks).open,'Operación del campus','⌂')}
+      ${statCard('Insumos por revisar',pendingInventory,'Pendientes o por solicitar','▤')}
+    </div>
+    <section class="card top3-card" style="margin-bottom:17px">
+      <div class="top3-header"><div><div class="eyebrow" style="margin-bottom:5px">Prioridades semanales</div><h2 class="top3-title">Tu Top 3</h2><div class="top3-note">${esc(selectedWeek.label)} · Tres objetivos que marcan la semana.</div></div><div class="segmented"><button type="button" class="${state.top3Target==='current'?'active':''}" data-action="top3-target" data-target="current">Esta semana</button><button type="button" class="${state.top3Target==='next'?'active':''}" data-action="top3-target" data-target="next">Próxima semana</button></div></div>
+      <form id="top3Form"><div class="top3-slots">${[1,2,3].map((n)=>{const x=currentTop.find(t=>Number(t.slot)===n)||{};return `<div class="top3-slot"><div class="slot-number">0${n}</div><input name="title${n}" maxlength="120" placeholder="Objetivo ${n}" value="${esc(x.title||'')}"><textarea name="detail${n}" placeholder="Notas, entregables o siguientes pasos…">${esc(x.detail||'')}</textarea></div>`}).join('')}</div><div class="top3-footer"><div class="helper-text">El sábado a las 12:00 p. m. recibirás un correo para preparar el Top 3 de la siguiente semana.</div><button class="btn btn-primary" type="submit">Guardar Top 3</button></div></form>
+    </section>
+    <div class="grid grid-2">
+      <section class="card"><div class="card-head"><div><h2 class="card-title">Lo siguiente</h2><p class="card-caption">Tareas abiertas con seguimiento pendiente.</p></div><button class="btn btn-quiet btn-sm" data-action="navigate" data-page="checklist">Ver todas →</button></div>${renderTaskList(tasks.filter(t=>!t.completed).slice(0,6),'No hay tareas pendientes.')}</section>
+      <section class="card"><div class="card-head"><div><h2 class="card-title">Hombría · Esta semana</h2><p class="card-caption">Invitaciones, agenda y logística.</p></div><button class="btn btn-quiet btn-sm" data-action="navigate" data-page="hombria">Abrir módulo →</button></div>${renderHombriaProgress(hom)}</section>
+    </div>`;
+}
+
+function renderHombriaProgress(tasks){
+  const s=taskStats(tasks); const pct=s.total?Math.round(s.done/s.total*100):0;
+  return `<div style="display:flex;justify-content:space-between;align-items:end;margin:6px 0 10px"><div><div class="stat-value" style="font-size:27px">${pct}%</div><div class="stat-foot">${s.done} de ${s.total} tareas completadas</div></div><span class="pill ${pct===100?'green':'red'}">${s.open} abiertas</span></div><div class="progress"><span style="width:${pct}%"></span></div><div class="task-list" style="margin-top:13px">${tasks.slice(0,4).map(t=>`<div class="task-row"><input class="task-check" type="checkbox" data-action="toggle-task" data-id="${esc(t.id)}" ${t.completed?'checked':''}><div class="task-content"><div class="task-title ${t.completed?'done':''}">${esc(t.title)}</div><div class="task-meta">${esc(t.category||'Checklist semanal')}</div></div></div>`).join('')||'<div class="empty">El checklist semanal aparecerá aquí.</div>'}</div>`;
+}
+
+function renderChecklist(){
+  const tasks=state.data.tasks||[];
+  const filtered=tasks.filter(t=>state.taskFilter==='all'?true:state.taskFilter==='done'?t.completed:!t.completed);
+  const counts=taskStats(tasks);
+  return `<div class="card"><div class="card-head"><div><h2 class="card-title">Todas las tareas</h2><p class="card-caption">Un solo registro alimenta los módulos y este checklist general.</p></div><div class="segmented"><button class="${state.taskFilter==='pending'?'active':''}" data-action="task-filter" data-filter="pending">Pendientes ${counts.open}</button><button class="${state.taskFilter==='done'?'active':''}" data-action="task-filter" data-filter="done">Hechas ${counts.done}</button><button class="${state.taskFilter==='all'?'active':''}" data-action="task-filter" data-filter="all">Todas</button></div></div>${renderTaskList(filtered,'No hay tareas en esta vista.')}</div>`;
+}
+
+function renderTaskList(tasks,emptyText){
+  if(!tasks.length) return `<div class="empty"><strong>Todo en orden</strong>${esc(emptyText||'No hay tareas para mostrar.')}</div>`;
+  const sorted=[...tasks].sort((a,b)=>Number(a.completed)-Number(b.completed));
+  return `<div class="task-list">${sorted.map(t=>`<div class="task-row"><input class="task-check" type="checkbox" data-action="toggle-task" data-id="${esc(t.id)}" ${t.completed?'checked':''}><div class="task-content"><div class="task-title ${t.completed?'done':''}">${esc(t.title)}</div><div class="task-meta"><span class="pill ${t.area==='11 Sur'?'red':t.area==='Hombría al Máximo'?'blue':''}">${esc(t.area||'Sin área')}</span><span>${esc(t.category||'General')}</span>${t.campus?`<span>· ${esc(t.campus)}</span>`:''}${t.dueDate?`<span>· ${fmtDate(t.dueDate)}</span>`:''}${t.owner?`<span>· ${esc(t.owner)}</span>`:''}</div></div><div class="task-actions"><button class="icon-btn" title="Editar" data-action="edit-task" data-id="${esc(t.id)}">✎</button><button class="icon-btn" title="Eliminar" data-action="delete-task" data-id="${esc(t.id)}">×</button></div></div>`).join('')}</div>`;
+}
+
+function render11Sur(){
+  const tasks=(state.data.tasks||[]).filter(t=>t.area==='11 Sur');
+  const inventory=(state.data.inventory||[]).filter(x=>String(x.location||'').toLowerCase().includes('11 sur'));
+  const team=(state.data.team||[]).filter(x=>String(x.area||'').toLowerCase()==='11 sur'&&x.active);
+  const s=taskStats(tasks);
+  return `<div class="grid grid-3" style="margin-bottom:16px">${statCard('Pendientes',s.open,'Tareas activas','◷')}${statCard('Completadas',s.done,'Seguimiento del campus','✓')}${statCard('Personas en equipo',team.length,'Voluntarios y responsables','♙')}</div>
+    <div class="split"><section class="card"><div class="card-head"><div><h2 class="card-title">Operación del campus</h2><p class="card-caption">Pendientes y mensajes por enviar en un solo listado.</p></div><button class="btn btn-primary btn-sm" data-action="new-task" data-area="11 Sur">＋ Nueva tarea</button></div>${renderTaskList(tasks,'Todavía no hay tareas registradas para 11 Sur.')}</section>
+    <section class="card"><div class="card-head"><div><h2 class="card-title">Insumos del campus</h2><p class="card-caption">Inventario y necesidades por resolver.</p></div><button class="btn btn-quiet btn-sm" data-action="navigate" data-page="inventory">Ver insumos →</button></div>${inventory.slice(0,6).map(x=>`<div class="task-row"><div class="task-content"><div class="task-title">${esc(x.item)}</div><div class="task-meta">${esc(x.quantity||'—')} ${esc(x.unit||'')} · ${esc(x.status||'Sin estado')}</div></div><span class="pill ${String(x.status).toLowerCase()==='disponible'?'green':'amber'}">${esc(x.status||'Pendiente')}</span></div>`).join('')||'<div class="empty">Aún no hay insumos registrados.</div>'}</section></div>
+    <section class="card" style="margin-top:16px"><div class="card-head"><div><h2 class="card-title">Retro semanal · 11 Sur</h2><p class="card-caption">Registra aprendizajes y envíate el resumen por correo.</p></div><span class="pill red">Cada semana</span></div>${renderRetroForm()}</section>
+    <section class="card" style="margin-top:16px"><div class="card-head"><div><h2 class="card-title">Últimas retros</h2><p class="card-caption">Historial reciente de retroalimentaciones del campus.</p></div></div>${(state.data.retros||[]).map(r=>`<div class="task-row"><div class="task-content"><div class="task-title">Retro · ${fmtDate(r.date)}</div><div class="task-meta">${r.emailSent?'Correo enviado':'Guardada sin confirmar envío'}</div></div><span class="pill ${r.emailSent?'green':'amber'}">${r.emailSent?'Enviada':'Pendiente'}</span></div>`).join('')||'<div class="empty">Todavía no hay retros guardadas.</div>'}</section>
+    <section class="card" style="margin-top:16px"><div class="card-head"><div><h2 class="card-title">Equipo del campus</h2><p class="card-caption">Vista rápida de responsables y voluntarios.</p></div><button class="btn btn-quiet btn-sm" data-action="navigate" data-page="team">Ver organigrama →</button></div>${renderTeamTree(team.slice(0,6))}</section>`;
+}
+
+function renderRetroForm(){
+  return `<form id="retroForm"><div class="form-grid">
+    <div class="field"><label>Fecha de visita / retro</label><input name="date" type="date" value="${todayIso()}" required></div>
+    <div class="field"><label>Comentarios generales</label><input name="comments" placeholder="Opcional"></div>
+    <div class="field"><label>¿Qué salió bien?</label><textarea name="good" placeholder="Una idea por renglón…" rows="4"></textarea></div>
+    <div class="field"><label>¿Qué salió mal?</label><textarea name="bad" placeholder="Una idea por renglón…" rows="4"></textarea></div>
+    <div class="field full"><label>¿Qué podemos mejorar?</label><textarea name="improve" placeholder="Una idea por renglón…" rows="4"></textarea></div>
+  </div><div class="form-actions"><button class="btn btn-primary" type="submit">Enviar retro a mi correo ↗</button></div></form>`;
+}
+
+function renderInventory(){
+  const items=(state.data.inventory||[]).filter(x=>state.inventoryLocation==='Todas'||x.location===state.inventoryLocation);
+  return `<div class="card"><div class="card-head"><div><h2 class="card-title">Control de insumos</h2><p class="card-caption">Registra existencias, necesidades y ubicación.</p></div><select class="filter-select" style="width:auto" id="inventoryLocation"><option>Todas</option>${['11 Sur','Hombría al Máximo','Bodega','Otros'].map(x=>`<option ${state.inventoryLocation===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Insumo</th><th>Cantidad</th><th>Estado</th><th>Ubicación</th><th>Notas</th><th></th></tr></thead><tbody>${items.map(x=>`<tr><td><div class="table-primary">${esc(x.item)}</div></td><td>${esc(x.quantity||'—')} ${esc(x.unit||'')}</td><td><span class="pill ${String(x.status).toLowerCase()==='disponible'?'green':'amber'}">${esc(x.status||'Pendiente')}</span></td><td>${esc(x.location||'—')}</td><td>${esc(x.notes||'—')}</td><td><button class="icon-btn" data-action="edit-inventory" data-id="${esc(x.id)}">✎</button><button class="icon-btn" data-action="delete-inventory" data-id="${esc(x.id)}">×</button></td></tr>`).join('')||'<tr><td colspan="6"><div class="empty">No hay insumos registrados.</div></td></tr>'}</tbody></table></div></div>`;
+}
+
+function renderTeam(){
+  const team=(state.data.team||[]).filter(x=>x.active);
+  const areas=[...new Set(team.map(x=>x.area).filter(Boolean))];
+  return `<div class="grid grid-2"><section class="card"><div class="card-head"><div><h2 class="card-title">Organigrama</h2><p class="card-caption">Relaciona cada persona con su responsable directo.</p></div><span class="pill blue">${team.length} personas</span></div>${renderTeamTree(team)}</section><section class="card"><h2 class="card-title">Cómo estructurar el equipo</h2><p class="card-caption" style="margin-bottom:15px">Agrega a los responsables y selecciona su supervisor para construir una jerarquía.</p><div class="message">Puedes registrar coordinadores, líderes de equipo y voluntarios. El campo “Responsable directo” conecta las personas en el organigrama.</div><div style="margin-top:18px"><div class="stat-label">Áreas representadas</div><div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:9px">${areas.map(x=>`<span class="pill">${esc(x)}</span>`).join('')||'<span class="helper-text">Aún no hay áreas registradas.</span>'}</div></div><div style="margin-top:20px"><button class="btn btn-primary" data-action="new-team">＋ Agregar persona</button></div></section></div>`;
+}
+
+function renderTeamTree(people){
+  if(!people.length) return '<div class="empty"><strong>El equipo está por construirse</strong>Agrega coordinadores y voluntarios para ver el organigrama.</div>';
+  const byId=Object.fromEntries(people.map(p=>[p.id,p]));
+  const children={}; people.forEach(p=>{const key=p.supervisorId||'root';(children[key]||(children[key]=[])).push(p);});
+  const renderNode=(p,depth=0)=>`<div class="${depth?'team-child':''}"><div class="team-person"><div class="team-initial">${initials(p.name)}</div><div class="team-person-info"><div class="team-name">${esc(p.name)}</div><div class="team-role">${esc(p.role||'Voluntario')} · ${esc(p.area||'Sin área')}</div></div><div class="task-actions"><button class="icon-btn" data-action="edit-team" data-id="${esc(p.id)}">✎</button><button class="icon-btn" data-action="delete-team" data-id="${esc(p.id)}">×</button></div></div>${(children[p.id]||[]).map(c=>renderNode(c,depth+1)).join('')}</div>`;
+  const roots=people.filter(p=>!p.supervisorId||!byId[p.supervisorId]);
+  return `<div class="team-tree">${roots.map(p=>renderNode(p)).join('')}</div>`;
+}
+
+function renderHombria(){
+  const allHombria=(state.data.tasks||[]).filter(t=>t.area==='Hombría al Máximo');
+  const tasks=allHombria.filter(t=>t.weekKey===state.data.week.key&&t.source==='HOMBRIA_SEMANAL');
+  const otherTasks=allHombria.filter(t=>t.source!=='HOMBRIA_SEMANAL');
+  const s=taskStats(tasks), pct=s.total?Math.round(s.done/s.total*100):0;
+  const campus=state.hombriaCampus==='Puebla'?'puebla':'huejo';
+  const calendar=(state.data.hombria||{})[campus]||[];
+  const metrics=(state.data.hombria||{}).metrics||{};
+  const people=state.hombriaCampus==='Puebla'?metrics.puebla:metrics.huejo;
+  const inscritos=state.hombriaCampus==='Puebla'?metrics.enrolledPuebla:metrics.enrolledHuejo;
+  const chartData=(people||[]).filter(x=>x.date&&x.attendance!==null);
+  return `${otherTasks.length?`<section class="card" style="margin-bottom:16px"><div class="card-head"><div><h2 class="card-title">Otros pendientes de Hombría</h2><p class="card-caption">Tareas adicionales del programa, fuera del checklist semanal.</p></div></div>${renderTaskList(otherTasks,'No hay otros pendientes de Hombría.')}</section>`:''}<section class="card" style="margin-bottom:16px"><div class="card-head"><div><h2 class="card-title">Checklist semanal</h2><p class="card-caption">Se genera automáticamente al iniciar una nueva semana.</p></div><span class="pill ${pct===100?'green':'red'}">${s.done}/${s.total} completadas</span></div><div style="margin-bottom:12px"><div class="progress"><span style="width:${pct}%"></span></div></div>${renderHombriaGroups(tasks)}</section>
+    <div class="grid grid-2" style="margin-bottom:16px"><section class="card"><div class="card-head"><div><h2 class="card-title">Métricas de asistencia</h2><p class="card-caption">Datos desde la pestaña “Asistencias”.</p></div><span class="pill blue">${state.hombriaCampus}</span></div><div class="segmented" style="margin-bottom:12px"><button class="${state.hombriaCampus==='Puebla'?'active':''}" data-action="hombria-campus" data-campus="Puebla">Puebla</button><button class="${state.hombriaCampus==='Huejotzingo'?'active':''}" data-action="hombria-campus" data-campus="Huejotzingo">Huejotzingo</button></div><div class="grid grid-2"><div><div class="stat-label">Total inscritos</div><div class="stat-value" style="font-size:25px">${inscritos||'—'}</div><div class="stat-foot">Configurable en Ajustes</div></div><div><div class="stat-label">Última asistencia</div><div class="stat-value" style="font-size:25px">${chartData.length?chartData[chartData.length-1].attendance:'—'}</div><div class="stat-foot">Personas registradas</div></div></div><div class="chart-box" style="margin-top:10px"><canvas id="attendanceChart"></canvas></div><div class="chart-legend"><span class="legend-item"><span class="legend-dot"></span>Asistencias</span></div></section>
+    <section class="card"><div class="card-head"><div><h2 class="card-title">Calendario de oradores</h2><p class="card-caption">Lectura directa de “Calendario Oradores / Host”.</p></div><button class="btn btn-quiet btn-sm" data-action="open-sheet">Abrir hoja ↗</button></div><div class="segmented" style="margin-bottom:12px"><button class="${state.hombriaCampus==='Puebla'?'active':''}" data-action="hombria-campus" data-campus="Puebla">Puebla</button><button class="${state.hombriaCampus==='Huejotzingo'?'active':''}" data-action="hombria-campus" data-campus="Huejotzingo">Huejo</button></div><div class="table-wrap"><table class="data-table" style="min-width:420px"><thead><tr><th>Fecha</th><th>Orador</th><th>Idea central</th><th>Host</th></tr></thead><tbody>${calendar.slice(0,8).map(x=>`<tr><td>${esc(x.date)}</td><td><div class="table-primary">${esc(x.speaker||'Por asignar')}</div></td><td>${esc(x.centralIdea||'—')}</td><td>${esc(x.owner||'—')}</td></tr>`).join('')||'<tr><td colspan="4"><div class="empty">No se encontraron filas con fechas en el calendario seleccionado.</div></td></tr>'}</tbody></table></div></section></div>
+    <section class="card"><div class="card-head"><div><h2 class="card-title">Agenda completa · ${state.hombriaCampus}</h2><p class="card-caption">Bienvenida, anuncios, oración, actividad, encargado y métricas.</p></div><span class="pill">${calendar.length} fechas</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Fecha</th><th>Orador</th><th>Idea central</th><th>Bienvenida</th><th>Anuncios</th><th>Oración</th><th>Actividad</th><th>Encargado</th><th>Métricas</th></tr></thead><tbody>${calendar.map(x=>`<tr><td>${esc(x.date)}</td><td>${esc(x.speaker)}</td><td>${esc(x.centralIdea)}</td><td>${esc(x.welcome)}</td><td>${esc(x.announcements)}</td><td>${esc(x.prayer)}</td><td>${esc(x.activity)}</td><td>${esc(x.owner)}</td><td>${esc(x.metrics)}</td></tr>`).join('')||'<tr><td colspan="9"><div class="empty">El calendario aparecerá cuando la hoja tenga registros.</div></td></tr>'}</tbody></table></div></section>`;
+}
+
+function renderHombriaGroups(tasks){
+  const groups=[['Invitaciones Puebla',tasks.filter(x=>x.category==='Invitaciones Puebla')],['Invitaciones Huejo',tasks.filter(x=>x.category==='Invitaciones Huejo')],['Organización',tasks.filter(x=>x.category==='Organización')]];
+  return `<div class="grid grid-3">${groups.map(g=>`<div class="area-card"><div class="area-name">${esc(g[0])}</div><div style="margin-top:9px">${g[1].map(t=>`<div class="task-row" style="padding:8px 0"><input class="task-check" type="checkbox" data-action="toggle-task" data-id="${esc(t.id)}" ${t.completed?'checked':''}><div class="task-content"><div class="task-title ${t.completed?'done':''}">${esc(t.title.replace(/^Puebla · |^Huejotzingo · /,''))}</div></div></div>`).join('')||'<div class="helper-text">Sin tareas.</div>'}</div></div>`).join('')}</div>`;
+}
+
+function drawAttendanceChart(){
+  const canvas=$('#attendanceChart'); if(!canvas)return;
+  const d=state.data.hombria.metrics||{}; const source=state.hombriaCampus==='Puebla'?d.puebla:d.huejo;
+  const points=(source||[]).filter(x=>x.date&&x.attendance!==null);
+  const ctx=canvas.getContext('2d'); const rect=canvas.getBoundingClientRect(); const ratio=window.devicePixelRatio||1;
+  canvas.width=Math.max(300,rect.width*ratio); canvas.height=210*ratio; ctx.scale(ratio,ratio);
+  const w=canvas.width/ratio,h=210,pad={l:34,r:12,t:15,b:32};
+  ctx.clearRect(0,0,w,h);
+  if(!points.length){ctx.fillStyle='#9aa29b';ctx.font='12px DM Sans';ctx.textAlign='center';ctx.fillText('Aún no hay datos para graficar',w/2,h/2);return;}
+  const values=points.map(p=>Number(p.attendance)||0), max=Math.max(5,Math.ceil(Math.max(...values)*1.15/5)*5), min=0;
+  const cw=w-pad.l-pad.r,ch=h-pad.t-pad.b;
+  ctx.strokeStyle='#edf0eb';ctx.lineWidth=1;ctx.fillStyle='#929b94';ctx.font='10px DM Sans';ctx.textAlign='right';
+  for(let i=0;i<=4;i++){const y=pad.t+ch*i/4;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(w-pad.r,y);ctx.stroke();ctx.fillText(String(Math.round(max-(max-min)*i/4)),pad.l-8,y+3);}
+  const coords=values.map((v,i)=>({x:pad.l+(points.length===1?cw/2:cw*i/(points.length-1)),y:pad.t+ch-(v-min)/(max-min)*ch}));
+  ctx.beginPath();coords.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.strokeStyle='#9a5142';ctx.lineWidth=2.5;ctx.lineJoin='round';ctx.stroke();
+  coords.forEach((p,i)=>{ctx.beginPath();ctx.arc(p.x,p.y,3.5,0,Math.PI*2);ctx.fillStyle='#fff';ctx.fill();ctx.strokeStyle='#9a5142';ctx.lineWidth=2;ctx.stroke();});
+  ctx.fillStyle='#8c958e';ctx.font='9px DM Sans';ctx.textAlign='center';
+  coords.forEach((p,i)=>{if(points.length<=6||i===0||i===points.length-1||i%2===0)ctx.fillText(String(points[i].date).slice(0,7),p.x,h-9);});
+}
+
+function renderEvents(){
+  const tasks=(state.data.tasks||[]).filter(t=>t.area!=='11 Sur'&&t.area!=='Hombría al Máximo');
+  const otherAreas=[...new Set(tasks.map(t=>t.area))];
+  return `<div class="card"><div class="card-head"><div><h2 class="card-title">Pendientes de otras áreas</h2><p class="card-caption">Cosas que tienes que coordinar fuera de 11 Sur y Hombría.</p></div><button class="btn btn-primary btn-sm" data-action="new-task">＋ Nueva tarea</button></div><div class="area-grid" style="margin-bottom:15px">${otherAreas.map(a=>`<div class="area-card"><div class="area-name">${esc(a)}</div><div class="area-count">${taskStats(tasks.filter(t=>t.area===a)).open}</div><div class="area-caption">pendientes</div></div>`).join('')||'<div class="helper-text">Aún no hay áreas adicionales.</div>'}</div>${renderTaskList(tasks,'Todavía no hay pendientes de otras áreas.')}</div>`;
+}
+
+function renderSettings(){
+  const s=state.data.settings||{}, areas=state.data.areas||[];
+  return `<div class="grid grid-2"><section class="card"><h2 class="card-title">Tu cuenta</h2><p class="card-caption" style="margin-bottom:17px">Este correo recibirá el Top 3 semanal y las retros de 11 Sur.</p><form id="settingsForm"><div class="field"><label>Correo personal</label><input name="email" type="email" required value="${esc(s.email||'')}" placeholder="tucorreo@ejemplo.com"></div><div class="reminder-row"><div><div class="task-title">Recordatorio de Top 3</div><div class="task-meta">Sábados alrededor de las 12:00 p. m.</div></div><span class="pill green">Programar / actualizar</span></div><div class="form-actions"><button class="btn btn-primary" type="submit">Guardar y activar recordatorio</button></div></form><div class="message" style="margin-top:14px">Google Apps Script enviará el correo desde tu cuenta después de que autorices el acceso la primera vez.</div></section>
+    <section class="card"><h2 class="card-title">Métricas de Hombría</h2><p class="card-caption" style="margin-bottom:17px">Las asistencias se leen automáticamente. El total de inscritos se configura aquí hasta definir una celda de origen en la hoja.</p><form id="metricsForm"><div class="field"><label>Total inscritos · Puebla</label><input name="enrolled_puebla" type="number" min="0" value="${esc(s.enrolled_puebla||'')}" placeholder="Ej. 120"></div><div class="field" style="margin-top:12px"><label>Total inscritos · Huejotzingo</label><input name="enrolled_huejo" type="number" min="0" value="${esc(s.enrolled_huejo||'')}" placeholder="Ej. 45"></div><div class="form-actions"><button class="btn btn-primary" type="submit">Guardar métricas</button></div></form></section>
+    <section class="card"><div class="card-head"><div><h2 class="card-title">Áreas de trabajo</h2><p class="card-caption">Puedes agregar áreas nuevas y asignarles tareas.</p></div></div><div class="task-list">${areas.map(a=>`<div class="task-row"><div class="stat-mark" style="background:${esc(a.color||'#f1f3ef')};color:#fff">•</div><div class="task-content"><div class="task-title">${esc(a.name)}</div></div></div>`).join('')}</div><form id="areaForm" style="margin-top:16px"><div class="field"><label>Nombre de nueva área</label><input name="name" placeholder="Ej. Instituto Ministerial" required></div><div class="form-actions"><button class="btn" type="submit">＋ Agregar área</button></div></form></section>
+    <section class="card"><h2 class="card-title">Conexiones</h2><p class="card-caption" style="margin-bottom:15px">Fuentes que alimentan la plataforma.</p><div class="task-row"><div class="task-content"><div class="task-title">Hoja de cálculo de Hombría</div><div class="task-meta">Calendario Oradores / Host · Asistencias</div></div><span class="pill ${state.data.hombria.sourceAvailable?'green':'amber'}">${state.data.hombria.sourceAvailable?'Conectada':'No encontrada'}</span></div><div class="task-row"><div class="task-content"><div class="task-title">Base de datos de oficina</div><div class="task-meta">Tareas, Top 3, equipo, insumos y retros</div></div><span class="pill green">Activa</span></div><div class="message" style="margin-top:12px">Todos los módulos leen y modifican los mismos registros de tareas. No se crean copias independientes en cada sección.</div></section></div>`;
+}
+
+function renderModal(){
+  if(!state.modal)return '';
+  if(state.modal==='mobile-menu'){return `<div class="modal-backdrop" data-action="backdrop"><div class="modal" style="max-width:360px"><div class="modal-head"><h2 class="modal-title">Más secciones</h2><button class="icon-btn" data-action="close-modal">×</button></div><div class="nav">${[['inventory','Insumos','▤'],['team','Equipos y voluntarios','♙'],['events','Eventos / Otras áreas','◇'],['settings','Configuración','⚙']].map(x=>`<button class="nav-btn" data-action="navigate" data-page="${x[0]}"><span class="nav-icon">${x[2]}</span>${x[1]}</button>`).join('')}</div></div></div>`;}
+  if(state.modal==='task'){
+    const t=state.editing||{}; const areas=(state.data.areas||[]).map(a=>a.name);
+    return `<div class="modal-backdrop" data-action="backdrop"><div class="modal"><div class="modal-head"><h2 class="modal-title">${t.id?'Editar tarea':'Nueva tarea'}</h2><button class="icon-btn" data-action="close-modal">×</button></div><form id="taskForm" data-id="${esc(t.id||'')}"><div class="form-grid"><div class="field full"><label>Nombre de la tarea</label><input name="title" required value="${esc(t.title||'')}" placeholder="¿Qué necesitas hacer?"></div><div class="field full"><label>Descripción / detalles</label><textarea name="description" placeholder="Información adicional…">${esc(t.description||'')}</textarea></div><div class="field"><label>Área</label><input name="area" list="areaOptions" value="${esc(t.area||state.editingArea||'11 Sur')}" required><datalist id="areaOptions">${areas.map(a=>`<option value="${esc(a)}">`).join('')}</datalist></div><div class="field"><label>Categoría</label><input name="category" value="${esc(t.category||'General')}" placeholder="Ej. Mensaje por enviar"></div><div class="field"><label>Fecha límite</label><input name="dueDate" type="date" value="${esc(t.dueDate||'')}"></div><div class="field"><label>Prioridad</label><select name="priority"><option ${t.priority==='Baja'?'selected':''}>Baja</option><option ${!t.priority||t.priority==='Media'?'selected':''}>Media</option><option ${t.priority==='Alta'?'selected':''}>Alta</option></select></div><div class="field"><label>Responsable</label><input name="owner" value="${esc(t.owner||'')}" placeholder="Nombre"></div><div class="field"><label>Campus / ubicación</label><input name="campus" value="${esc(t.campus||'')}" placeholder="Opcional"></div></div><div class="form-actions"><button class="btn" type="button" data-action="close-modal">Cancelar</button><button class="btn btn-primary" type="submit">Guardar tarea</button></div></form></div></div>`;
+  }
+  if(state.modal==='inventory'){
+    const x=state.editing||{};
+    return `<div class="modal-backdrop" data-action="backdrop"><div class="modal"><div class="modal-head"><h2 class="modal-title">${x.id?'Editar insumo':'Agregar insumo'}</h2><button class="icon-btn" data-action="close-modal">×</button></div><form id="inventoryForm" data-id="${esc(x.id||'')}"><div class="form-grid"><div class="field full"><label>Nombre del insumo</label><input name="item" required value="${esc(x.item||'')}" placeholder="Ej. Papel, agua, material Kids"></div><div class="field"><label>Cantidad</label><input name="quantity" value="${esc(x.quantity||'')}" placeholder="Ej. 2"></div><div class="field"><label>Unidad</label><input name="unit" value="${esc(x.unit||'')}" placeholder="piezas, cajas…"></div><div class="field"><label>Estado</label><select name="status">${['Disponible','Por solicitar','Pendiente','Agotado'].map(v=>`<option ${x.status===v?'selected':''}>${v}</option>`).join('')}</select></div><div class="field"><label>Ubicación</label><input name="location" value="${esc(x.location||'11 Sur')}" placeholder="11 Sur"></div><div class="field full"><label>Notas</label><textarea name="notes">${esc(x.notes||'')}</textarea></div></div><div class="form-actions"><button class="btn" type="button" data-action="close-modal">Cancelar</button><button class="btn btn-primary" type="submit">Guardar insumo</button></div></form></div></div>`;
+  }
+  if(state.modal==='team'){
+    const x=state.editing||{}; const active=(state.data.team||[]).filter(p=>p.active&&p.id!==x.id);
+    return `<div class="modal-backdrop" data-action="backdrop"><div class="modal"><div class="modal-head"><h2 class="modal-title">${x.id?'Editar persona':'Agregar persona'}</h2><button class="icon-btn" data-action="close-modal">×</button></div><form id="teamForm" data-id="${esc(x.id||'')}"><div class="form-grid"><div class="field"><label>Nombre</label><input name="name" required value="${esc(x.name||'')}"></div><div class="field"><label>Responsabilidad / rol</label><input name="role" value="${esc(x.role||'')}" placeholder="Coordinador, líder…"></div><div class="field"><label>Área / campus</label><input name="area" value="${esc(x.area||'11 Sur')}"></div><div class="field"><label>Responsable directo</label><select name="supervisorId"><option value="">Sin responsable / nivel raíz</option>${active.map(p=>`<option value="${esc(p.id)}" ${x.supervisorId===p.id?'selected':''}>${esc(p.name)} · ${esc(p.role||'')}</option>`).join('')}</select></div><div class="field"><label>Teléfono</label><input name="phone" value="${esc(x.phone||'')}"></div><div class="field"><label>Correo</label><input name="email" type="email" value="${esc(x.email||'')}"></div><div class="field full"><label>Notas</label><textarea name="notes">${esc(x.notes||'')}</textarea></div></div><div class="form-actions"><button class="btn" type="button" data-action="close-modal">Cancelar</button><button class="btn btn-primary" type="submit">Guardar persona</button></div></form></div></div>`;
+  }
+  return '';
+}
+
+function openModal(type, data=null){state.modal=type;state.editing=data;render();}
+function closeModal(){state.modal=null;state.editing=null;render();}
+function formObject(form){return Object.fromEntries(new FormData(form).entries());}
+
+/* Eventos de interfaz */
+document.addEventListener('click', async e=>{
+  const btn=e.target.closest('[data-action]'); if(!btn)return;
+  const action=btn.dataset.action;
+  if(action==='navigate'){state.page=btn.dataset.page;state.modal=null;render();}
+  if(action==='mobile-more'){openModal('mobile-menu');}
+  if(action==='new-task'){state.editingArea=btn.dataset.area||(state.page==='events'?'Eventos / Otras áreas':state.page==='hombria'?'Hombría al Máximo':'11 Sur');openModal('task');}
+  if(action==='edit-task'){const t=state.data.tasks.find(x=>x.id===btn.dataset.id);if(t)openModal('task',t);}
+  if(action==='delete-task'){if(confirm('¿Eliminar esta tarea?'))server('deleteTask',btn.dataset.id).then(()=>loadData(true)).then(()=>toast('Tarea eliminada.')).catch(e=>toast(e.message,true));}
+  if(action==='toggle-task'){/* handled by change event */}
+  if(action==='task-filter'){state.taskFilter=btn.dataset.filter;render();}
+  if(action==='top3-target'){state.top3Target=btn.dataset.target;render();}
+  if(action==='new-inventory'){openModal('inventory');}
+  if(action==='edit-inventory'){const x=state.data.inventory.find(a=>a.id===btn.dataset.id);if(x)openModal('inventory',x);}
+  if(action==='delete-inventory'){if(confirm('¿Eliminar este insumo?'))server('deleteInventoryItem',btn.dataset.id).then(()=>loadData(true)).then(()=>toast('Insumo eliminado.')).catch(e=>toast(e.message,true));}
+  if(action==='new-team'){openModal('team');}
+  if(action==='edit-team'){const x=state.data.team.find(a=>a.id===btn.dataset.id);if(x)openModal('team',x);}
+  if(action==='delete-team'){if(confirm('¿Eliminar a esta persona del organigrama?'))server('deleteTeamMember',btn.dataset.id).then(()=>loadData(true)).then(()=>toast('Persona eliminada.')).catch(e=>toast(e.message,true));}
+  if(action==='close-modal'){closeModal();}
+  if(action==='backdrop'&&e.target.classList.contains('modal-backdrop'))closeModal();
+  if(action==='hombria-campus'){state.hombriaCampus=btn.dataset.campus;render();}
+  if(action==='open-sheet'){window.open('https://docs.google.com/spreadsheets/d/11VNaHB13tsaJcQS6jJY7GIp8k8sr0zLfxb0YTk7evK0/edit?usp=sharing','_blank');}
+});
+
+document.addEventListener('change', async e=>{
+  const el=e.target;
+  if(el.matches('[data-action="toggle-task"]')){
+    try{await server('updateTask',{id:el.dataset.id,completed:el.checked});await loadData(true);toast('Checklist actualizado.');}catch(err){el.checked=!el.checked;toast(err.message,true);}
+  }
+  if(el.id==='inventoryLocation'){state.inventoryLocation=el.value;render();}
+});
+
+document.addEventListener('submit', async e=>{
+  const form=e.target; e.preventDefault();
+  try{
+    if(form.id==='top3Form'){
+      const items=[1,2,3].map(n=>({title:form[`title${n}`].value,detail:form[`detail${n}`].value,completed:false}));
+      await server('saveTop3',{weekKey:(state.top3Target==='next'?state.data.nextWeek.key:state.data.week.key),items});await loadData(true);toast('Tu Top 3 quedó guardado.');
+    }
+    if(form.id==='taskForm'){
+      const p=formObject(form);p.id=form.dataset.id;
+      if(p.id)await server('updateTask',p);else await server('createTask',p);
+      state.modal=null;state.editing=null;await loadData(true);toast(p.id?'Tarea actualizada.':'Tarea creada.');
+    }
+    if(form.id==='retroForm'){
+      const p=formObject(form);if(!p.good&&!p.bad&&!p.improve&&!p.comments){toast('Agrega por lo menos una observación antes de enviar.',true);return;}
+      const result=await server('sendRetroEmail',p);form.reset();await loadData(true);toast(`Retro enviada a ${result.email}.`);
+    }
+    if(form.id==='inventoryForm'){
+      const p=formObject(form);p.id=form.dataset.id;await server('saveInventoryItem',p);state.modal=null;await loadData(true);toast('Insumo guardado.');
+    }
+    if(form.id==='teamForm'){
+      const p=formObject(form);p.id=form.dataset.id;await server('saveTeamMember',p);state.modal=null;await loadData(true);toast('Persona guardada en el equipo.');
+    }
+    if(form.id==='settingsForm'){
+      const p=formObject(form);p.installReminder=true;await server('saveSettings',p);await loadData(true);toast('Configuración guardada y recordatorio activado.');
+    }
+    if(form.id==='metricsForm'){
+      await server('saveSettings',formObject(form));await loadData(true);toast('Métricas actualizadas.');
+    }
+    if(form.id==='areaForm'){
+      await server('saveArea',formObject(form));await loadData(true);toast('Nueva área agregada.');
+    }
+  }catch(err){toast(err.message,true);}
+});
+
+loadData();
+</script>
