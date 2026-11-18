@@ -15,14 +15,14 @@ Aplicación web adaptable a computadora y celular, construida con Google Apps Sc
 
 ## Arquitectura
 
-- **Google Sheets:** fuente única de datos. El script independiente agrega siete pestañas `Oficina - ...` a la hoja de Hombría existente.
+- **Google Sheets:** se usan dos documentos separados. La hoja de Hombría es una fuente de lectura; al ejecutar el instalador, Apps Script crea un segundo documento `Naciones | Oficina — Base de datos` para las tareas, Top 3, retros, insumos, equipos, áreas y ajustes.
 - **Google Apps Script:** API, reglas de negocio, envío de correo y programación del recordatorio.
 - **GitHub:** historial y control de versiones del proyecto.
 - No se utiliza `localStorage` como base de datos, por lo que los cambios se comparten entre los dispositivos que abran la misma implementación.
 
 ## Instalación sin modificar el Apps Script existente
 
-1. Abre [Google Apps Script](https://script.google.com/) con la misma cuenta que tiene acceso de edición a la hoja de Hombría.
+1. Abre [Google Apps Script](https://script.google.com/) con la misma cuenta que tiene al menos permiso de lectura sobre la hoja de Hombría.
 2. Crea un **proyecto independiente** llamado `Naciones | Oficina`. No lo crees desde Extensiones dentro de la hoja; así no se modifica ni se reemplaza el código que ya utiliza Hombría.
 3. En ese proyecto, reemplaza/crea los archivos con el contenido de este repositorio:
    - `Code.gs`
@@ -30,18 +30,19 @@ Aplicación web adaptable a computadora y celular, construida con Google Apps Sc
    - `Styles.html`
    - `App.html`
 4. En **Configuración del proyecto**, activa la opción para mostrar el archivo de manifiesto `appsscript.json` y reemplázalo con el incluido aquí.
-5. Guarda el proyecto y ejecuta una vez `setupOfficePlatform` y `authorizeOfficePlatform` desde el editor. Acepta los permisos de Google Sheets, correo y activadores.
-6. En el editor, abre **Implementar → Nueva implementación → Aplicación web**.
+5. Guarda el proyecto y ejecuta primero `setupOfficePlatform` desde el editor. La función crea automáticamente un nuevo Google Sheets llamado `Naciones | Oficina — Base de datos`, guarda su ID en las propiedades del proyecto y crea las pestañas de trabajo. Revisa el registro de ejecución para obtener el enlace del documento nuevo.
+6. Ejecuta `authorizeOfficePlatform` y acepta los permisos de Google Sheets, propiedades del proyecto, correo y activadores. Esta función también comprueba que la cuenta pueda leer la hoja original de Hombría.
+7. En el editor, abre **Implementar → Nueva implementación → Aplicación web**.
    - Ejecutar como: **tu cuenta**.
    - Quién tiene acceso: **solo tú** para el primer lanzamiento. Más adelante se puede abrir a usuarios de tu organización.
-7. Abre la URL de la aplicación web.
-8. En **Configuración**, verifica tu correo y guarda para instalar el recordatorio del sábado.
+8. Abre la URL de la aplicación web.
+9. En **Configuración**, verifica tu correo y guarda para instalar el recordatorio del sábado.
 
-> El ID de la hoja ya está definido en `Code.gs`. El script independiente abre el documento con `SpreadsheetApp.openById()`, así no depende de un proyecto Apps Script vinculado ni toca el código que ya tengas.
+> La base de datos de Oficina se crea aparte y queda guardada en las propiedades del proyecto. La hoja original de Hombría no recibe pestañas nuevas ni cambios. El correo inicial queda preconfigurado como `estebanbautista@naciones.org.mx` y se puede modificar desde Configuración.
 
 ## Integración de Hombría
 
-La integración usa el ID de la hoja compartida y los nombres de pestaña y rangos que indicaste. El script necesita que la cuenta que lo ejecuta tenga permiso de edición sobre ese documento:
+La integración usa el ID de la hoja compartida y los nombres de pestaña y rangos que indicaste. La cuenta que ejecuta la aplicación debe tener al menos permiso de lectura sobre ese documento. La aplicación no escribe ni crea pestañas en la hoja de Hombría:
 
 - `Calendario Oradores / Host`: A:I para Puebla y K:S para Huejotzingo.
 - `Asistencias`: B11:K11 / B12:K12 para fechas y asistencias de Puebla; B27:K27 / B28:K28 para Huejotzingo.
@@ -50,7 +51,7 @@ La tabla de oradores se lee desde la fila 2 hasta la última fila disponible. La
 
 ## Modelo de datos
 
-El script crea estas pestañas adicionales, sin alterar las dos pestañas fuente de Hombría:
+La nueva base de datos `Naciones | Oficina — Base de datos` contiene estas pestañas, separadas del documento de Hombría:
 
 - `Oficina - Tareas`
 - `Oficina - Top 3`
@@ -69,7 +70,8 @@ Se crea un activador semanal de Apps Script para el sábado a las 12:00 p. m. co
 ## Notas antes de producción
 
 - La primera versión está pensada para un administrador principal. Si después entrarán coordinadores o equipos, habrá que diseñar permisos por rol y campus antes de compartir la aplicación.
-- Las tareas, Top 3, insumos, equipo y retros se guardan en la hoja vinculada. Evita renombrar manualmente las pestañas `Oficina - ...`.
+- Las tareas, Top 3, insumos, equipo y retros se guardan en la base independiente `Naciones | Oficina — Base de datos`. Evita renombrar manualmente las pestañas `Oficina - ...`.
+- El ID de la base se conserva en `PropertiesService` con la clave `OFFICE_DATABASE_ID`; no es necesario pegarlo manualmente en el código.
 - Los datos históricos de asistencia y el calendario original se leen; no se editan desde la aplicación.
 - El correo de la retro se envía desde la cuenta propietaria del script después de autorizar `MailApp`.
 

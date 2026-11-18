@@ -5,7 +5,9 @@
  */
 const OFFICE = {
   TIMEZONE: 'America/Mexico_City',
-  SPREADSHEET_ID: '11VNaHB13tsaJcQS6jJY7GIp8k8sr0zLfxb0YTk7evK0',
+  HOMBRIA_SOURCE_ID: '11VNaHB13tsaJcQS6jJY7GIp8k8sr0zLfxb0YTk7evK0',
+  DEFAULT_EMAIL: 'estebanbautista@naciones.org.mx',
+  DB_PROPERTY_KEY: 'OFFICE_DATABASE_ID',
   SHEETS: {
     TASKS: 'Oficina - Tareas',
     TOP3: 'Oficina - Top 3',
@@ -42,18 +44,32 @@ function include(filename) {
 }
 
 function setupOfficePlatform() {
+  const database = ensureOfficeDatabase_();
   ensureOfficeSheets_();
   ensureWeeklyHombriaTasks_();
-  return { ok: true, message: 'Estructura de Oficina creada y lista.' };
+  Logger.log('Base de datos de Oficina: ' + database.getUrl());
+  return {
+    ok: true,
+    message: 'Base de datos independiente creada y lista.',
+    databaseName: database.getName(),
+    databaseId: database.getId(),
+    databaseUrl: database.getUrl()
+  };
 }
 
 function authorizeOfficePlatform() {
   ensureOfficeSheets_();
-  // Fuerza la solicitud de permisos para hoja, correo y activadores desde el editor.
-  getSpreadsheet_().getName();
+  // Verifica acceso tanto a la base independiente como a la fuente de Hombría.
+  const databaseName = getSpreadsheet_().getName();
+  const hombriaName = getHombriaSpreadsheet_().getName();
   MailApp.getRemainingDailyQuota();
   ScriptApp.getProjectTriggers();
-  return { ok: true, message: 'Permisos básicos autorizados.' };
+  return {
+    ok: true,
+    message: 'Permisos básicos autorizados.',
+    databaseName: databaseName,
+    hombriaSourceName: hombriaName
+  };
 }
 
 function getAppData() {
@@ -331,13 +347,13 @@ function getSettings_() {
   const values = sheet.getDataRange().getValues();
   const output = {};
   values.slice(1).forEach(r => output[String(r[0])] = r[1]);
-  if (!output.email) output.email = Session.getEffectiveUser().getEmail() || '';
+  if (!output.email) output.email = OFFICE.DEFAULT_EMAIL || Session.getEffectiveUser().getEmail() || '';
   return output;
 }
 
 /* ------------------------------ CALENDARIO Y MÉTRICAS ------------------------------ */
 function getHombriaData_() {
-  const ss = getSpreadsheet_();
+  const ss = getHombriaSpreadsheet_();
   const calendar = ss.getSheetByName('Calendario Oradores / Host');
   const attendance = ss.getSheetByName('Asistencias');
   const result = { puebla: [], huejo: [], metrics: { puebla: [], huejo: [] }, sourceAvailable: !!calendar };
@@ -368,8 +384,47 @@ function parseMetric_(value) {
 }
 
 /* ------------------------------ UTILIDADES ------------------------------ */
+function ensureOfficeDatabase_() {
+  const properties = PropertiesService.getScriptProperties();
+  const storedId = properties.getProperty(OFFICE.DB_PROPERTY_KEY);
+  if (storedId) {
+    try {
+      return SpreadsheetApp.openById(storedId);
+    } catch (error) {
+      throw new Error('No pude abrir la base de datos de Oficina guardada. Revisa el acceso o elimina la propiedad OFFICE_DATABASE_ID para crear una nueva.');
+    }
+  }
+
+  const database = SpreadsheetApp.create('Naciones | Oficina — Base de datos');
+  properties.setProperty(OFFICE.DB_PROPERTY_KEY, database.getId());
+
+  const info = database.getSheets()[0];
+  info.setName('Información');
+  info.getRange(1, 1, 3, 2).setValues([
+    ['Naciones | Oficina', 'Base de datos de la plataforma'],
+    ['Creada', new Date()],
+    ['Nota', 'No modificar los encabezados de las pestañas Oficina - ...']
+  ]);
+  info.getRange('A1:B1').setFontWeight('bold').setBackground('#F1F3F5');
+  info.setColumnWidth(1, 180);
+  info.setColumnWidth(2, 420);
+  return database;
+}
+
 function getSpreadsheet_() {
-  return SpreadsheetApp.openById(OFFICE.SPREADSHEET_ID);
+  const id = PropertiesService.getScriptProperties().getProperty(OFFICE.DB_PROPERTY_KEY);
+  if (!id) {
+    throw new Error('La base de datos de Oficina todavía no está creada. Ejecuta setupOfficePlatform() una vez desde el editor de Apps Script.');
+  }
+  return SpreadsheetApp.openById(id);
+}
+
+function getHombriaSpreadsheet_() {
+  try {
+    return SpreadsheetApp.openById(OFFICE.HOMBRIA_SOURCE_ID);
+  } catch (error) {
+    throw new Error('No pude acceder a la hoja de Hombría. Verifica que la cuenta que ejecuta esta aplicación tenga al menos permiso de lectura sobre el documento original.');
+  }
 }
 
 function ensureOfficeSheets_() {
@@ -384,6 +439,8 @@ function ensureOfficeSheets_() {
   if (areas.getLastRow() === 1) {
     areas.getRange(2, 1, OFFICE.DEFAULT_AREAS.length, OFFICE.AREA_HEADERS.length).setValues(OFFICE.DEFAULT_AREAS);
   }
+  const settings = ss.getSheetByName(OFFICE.SHEETS.SETTINGS);
+  if (settings.getLastRow() === 1) settings.appendRow(['email', OFFICE.DEFAULT_EMAIL]);
   [OFFICE.SHEETS.TASKS, OFFICE.SHEETS.TOP3, OFFICE.SHEETS.RETROS, OFFICE.SHEETS.INVENTORY, OFFICE.SHEETS.TEAM, OFFICE.SHEETS.AREAS, OFFICE.SHEETS.SETTINGS].forEach(name => {
     const sh = ss.getSheetByName(name);
     sh.setFrozenRows(1);
